@@ -154,7 +154,7 @@ if es_admin:
                                         "basándote en si el desarrollo es correcto. No agregues texto adicional, solo la nota numérica."
                                     )
                                     response = client.models.generate_content(
-                                        model='gemini-2.5-flash',
+                                        model='gemini-3.5-flash',
                                         contents=[uploaded_file, prompt_ia]
                                     )
                                     # Limpiamos la respuesta para extraer el número
