@@ -137,10 +137,16 @@ if es_admin:
                     st.image(img_path)
                     nombre_img = os.path.basename(img_path)
                     
-                    col_num, col_ia = st.columns([2, 1])
+                    col_num, col_ia, col_del = st.columns([2, 1, 1])
                     with col_num:
                         nota_ingresada = st.number_input(f"Nota para {nombre_img}:", 0, 20, key=img_path)
                         notas_por_pregunta[img_path] = nota_ingresada
+                        
+                    with col_del:
+                        if st.button("🗑️ Borrar", key=f"del_img_{img_path}"):
+                            os.remove(img_path)
+                            st.success(f"Imagen {nombre_img} eliminada")
+                            st.rerun()
                         
                     with col_ia:
                         if st.button(f"🤖 Calificar con IA", key=f"btn_ia_{img_path}"):
@@ -191,7 +197,8 @@ else:
                 elif p["tipo"] == "Imagen/Abierta":
                     archivo = st.file_uploader(f"Cargar respuesta P{i+1}", type=["png", "jpg"], key=f"img_{i}")
                     if archivo:
-                        with open(f"uploads/{codigo_curso}_{nombre}_P{i+1}_Imagen.png", "wb") as f: f.write(archivo.getbuffer())
+                        nombre_archivo_normalizado = nombre.strip().upper()
+                        with open(f"uploads/{codigo_curso}_{nombre_archivo_normalizado}_P{i+1}_Imagen.png", "wb") as f: f.write(archivo.getbuffer())
                     respuestas[i] = "Imagen"
                 else:
                     respuestas[i] = st.text_input(f"Respuesta P{i+1}", key=f"t_{i}")
