@@ -3,6 +3,7 @@ import pandas as pd
 import os
 import json
 import glob
+import re
 from google import genai
 
 st.set_page_config(page_title="EduProf Pro", layout="wide")
@@ -152,12 +153,33 @@ if es_admin:
                         if st.button(f"🤖 Calificar con IA", key=f"btn_ia_{img_path}"):
                             with st.spinner("La IA está analizando la imagen..."):
                                 try:
+                                    # Extraemos el número de pregunta (P1, P2, ...) del nombre del archivo
+                                    match_p = re.search(r"_P(\d+)_Imagen", nombre_img)
+                                    idx_pregunta = int(match_p.group(1)) - 1 if match_p else None
+
+                                    if idx_pregunta is not None and 0 <= idx_pregunta < len(estado["preguntas"]):
+                                        pregunta_actual = estado["preguntas"][idx_pregunta]
+                                        enunciado_actual = pregunta_actual.get("q", "")
+                                        criterio_actual = pregunta_actual.get("a", "")
+                                        puntaje_max = pregunta_actual.get("p", 5)
+                                    else:
+                                        enunciado_actual = "(No se pudo identificar la pregunta)"
+                                        criterio_actual = "(Sin criterio definido)"
+                                        puntaje_max = 5
+
                                     # Subimos y analizamos la imagen usando el SDK moderno de Google GenAI
                                     uploaded_file = client.files.upload(file=img_path)
                                     prompt_ia = (
-                                        "Eres un profesor experto evaluando exámenes. Analiza la imagen de la respuesta del alumno. "
-                                        "Devuelve únicamente un número entero o decimal que represente la nota obtenida, "
-                                        "basándote en si el desarrollo es correcto. No agregues texto adicional, solo la nota numérica."
+                                        "Eres un profesor experto evaluando exámenes. "
+                                        f"La pregunta del examen es: \"{enunciado_actual}\". "
+                                        f"El criterio de evaluación / respuesta esperada es: \"{criterio_actual}\". "
+                                        f"El puntaje máximo de esta pregunta es {puntaje_max}. "
+                                        "Analiza la imagen adjunta, que debería contener la respuesta del alumno a esa pregunta. "
+                                        "Si la imagen NO corresponde a una respuesta de examen (por ejemplo, es una foto personal, "
+                                        "un documento en blanco, o contenido sin relación con la pregunta), devuelve el número 0. "
+                                        "Si sí corresponde, evalúa qué tan correcto y completo es el desarrollo comparado con el criterio, "
+                                        "y devuelve un número entero o decimal entre 0 y el puntaje máximo. "
+                                        "Devuelve ÚNICAMENTE el número, sin texto adicional."
                                     )
                                     response = client.models.generate_content(
                                         model='gemini-3.5-flash',
