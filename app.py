@@ -30,6 +30,43 @@ def cargar_estado(file):
 def guardar_estado(file, estado):
     with open(file, "w") as f: json.dump(estado, f)
 
+def calificar_imagen_con_ia(img_path, nombre_img, estado, client):
+    """Envía una imagen a la IA junto con la pregunta y criterio reales, y devuelve la nota (float) ya acotada al puntaje máximo."""
+    match_p = re.search(r"_P(\d+)_Imagen", nombre_img)
+    idx_pregunta = int(match_p.group(1)) - 1 if match_p else None
+
+    if idx_pregunta is not None and 0 <= idx_pregunta < len(estado["preguntas"]):
+        pregunta_actual = estado["preguntas"][idx_pregunta]
+        enunciado_actual = pregunta_actual.get("q", "")
+        criterio_actual = pregunta_actual.get("a", "")
+        puntaje_max = pregunta_actual.get("p", 5)
+    else:
+        enunciado_actual = "(No se pudo identificar la pregunta)"
+        criterio_actual = "(Sin criterio definido)"
+        puntaje_max = 5
+
+    uploaded_file = client.files.upload(file=img_path)
+    prompt_ia = (
+        "Eres un profesor experto evaluando exámenes. "
+        f"La pregunta del examen es: \"{enunciado_actual}\". "
+        f"El criterio de evaluación / respuesta esperada es: \"{criterio_actual}\". "
+        f"El puntaje máximo de esta pregunta es {puntaje_max}. "
+        "Analiza la imagen adjunta, que debería contener la respuesta del alumno a esa pregunta. "
+        "Si la imagen NO corresponde a una respuesta de examen (por ejemplo, es una foto personal, "
+        "un documento en blanco, o contenido sin relación con la pregunta), devuelve el número 0. "
+        "Si sí corresponde, evalúa qué tan correcto y completo es el desarrollo comparado con el criterio, "
+        "y devuelve un número entero o decimal entre 0 y el puntaje máximo. "
+        "Devuelve ÚNICAMENTE el número, sin texto adicional."
+    )
+    response = client.models.generate_content(
+        model='gemini-3.5-flash',
+        contents=[uploaded_file, prompt_ia]
+    )
+    texto_respuesta = response.text.strip()
+    nota = float(''.join(c for c in texto_respuesta if c.isdigit() or c == '.'))
+    nota = max(0.0, min(nota, float(puntaje_max)))
+    return nota
+
 # --- PANEL LATERAL ---
 password = st.sidebar.text_input("Clave de Admin", type="password")
 es_admin = (password == st.secrets.get("ADMIN_PASSWORD", ""))
@@ -134,13 +171,29 @@ if es_admin:
             notas_por_pregunta = {}
             
             if imagenes_alumno:
+                if st.button("🤖 Calificar TODAS las preguntas con IA", key=f"btn_ia_todas_{sel_alumno}"):
+                    with st.spinner("La IA está calificando todas las respuestas de este alumno..."):
+                        errores = []
+                        for img_path in imagenes_alumno:
+                            nombre_img = os.path.basename(img_path)
+                            try:
+                                nota_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
+                                st.session_state[img_path] = nota_ia
+                            except Exception as e:
+                                errores.append(f"{nombre_img}: {e}")
+                        if errores:
+                            st.error("Hubo errores calificando algunas imágenes:\n" + "\n".join(errores))
+                    st.rerun()
+
                 for img_path in imagenes_alumno:
                     st.image(img_path)
                     nombre_img = os.path.basename(img_path)
                     
                     col_num, col_ia, col_del = st.columns([2, 1, 1])
                     with col_num:
-                        nota_ingresada = st.number_input(f"Nota para {nombre_img}:", 0, 20, key=img_path)
+                        nota_ingresada = st.number_input(
+                            f"Nota para {nombre_img}:", min_value=0.0, max_value=20.0, step=0.5, key=img_path
+                        )
                         notas_por_pregunta[img_path] = nota_ingresada
                         
                     with col_del:
@@ -153,45 +206,11 @@ if es_admin:
                         if st.button(f"🤖 Calificar con IA", key=f"btn_ia_{img_path}"):
                             with st.spinner("La IA está analizando la imagen..."):
                                 try:
-                                    # Extraemos el número de pregunta (P1, P2, ...) del nombre del archivo
-                                    match_p = re.search(r"_P(\d+)_Imagen", nombre_img)
-                                    idx_pregunta = int(match_p.group(1)) - 1 if match_p else None
-
-                                    if idx_pregunta is not None and 0 <= idx_pregunta < len(estado["preguntas"]):
-                                        pregunta_actual = estado["preguntas"][idx_pregunta]
-                                        enunciado_actual = pregunta_actual.get("q", "")
-                                        criterio_actual = pregunta_actual.get("a", "")
-                                        puntaje_max = pregunta_actual.get("p", 5)
-                                    else:
-                                        enunciado_actual = "(No se pudo identificar la pregunta)"
-                                        criterio_actual = "(Sin criterio definido)"
-                                        puntaje_max = 5
-
-                                    # Subimos y analizamos la imagen usando el SDK moderno de Google GenAI
-                                    uploaded_file = client.files.upload(file=img_path)
-                                    prompt_ia = (
-                                        "Eres un profesor experto evaluando exámenes. "
-                                        f"La pregunta del examen es: \"{enunciado_actual}\". "
-                                        f"El criterio de evaluación / respuesta esperada es: \"{criterio_actual}\". "
-                                        f"El puntaje máximo de esta pregunta es {puntaje_max}. "
-                                        "Analiza la imagen adjunta, que debería contener la respuesta del alumno a esa pregunta. "
-                                        "Si la imagen NO corresponde a una respuesta de examen (por ejemplo, es una foto personal, "
-                                        "un documento en blanco, o contenido sin relación con la pregunta), devuelve el número 0. "
-                                        "Si sí corresponde, evalúa qué tan correcto y completo es el desarrollo comparado con el criterio, "
-                                        "y devuelve un número entero o decimal entre 0 y el puntaje máximo. "
-                                        "Devuelve ÚNICAMENTE el número, sin texto adicional."
-                                    )
-                                    response = client.models.generate_content(
-                                        model='gemini-3.5-flash',
-                                        contents=[uploaded_file, prompt_ia]
-                                    )
-                                    # Limpiamos la respuesta para extraer el número
-                                    texto_respuesta = response.text.strip()
-                                    nota_sugerida = float(''.join(c for c in texto_respuesta if c.isdigit() or c == '.'))
-                                    st.success(f"IA sugirió: {nota_sugerida} puntos")
-                                    # Recargamos para reflejar el cambio si se desea
+                                    nota_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
+                                    st.session_state[img_path] = nota_ia
                                 except Exception as e:
                                     st.error(f"Error al calificar con IA: {e}")
+                            st.rerun()
                 
                 if st.button("Guardar Notas"):
                     df.loc[df['Alumno'] == sel_alumno, 'Nota_Manual'] = sum(notas_por_pregunta.values())
