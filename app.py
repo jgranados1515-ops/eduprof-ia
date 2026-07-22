@@ -31,7 +31,7 @@ def guardar_estado(file, estado):
 
 # --- PANEL LATERAL ---
 password = st.sidebar.text_input("Clave de Admin", type="password")
-es_admin = (password == "12345")
+es_admin = (password == st.secrets.get("ADMIN_PASSWORD", ""))
 
 if es_admin:
     st.sidebar.success("Modo Administrador Activo")
