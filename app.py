@@ -165,6 +165,39 @@ if es_admin:
                     st.rerun()
             
             st.divider()
+
+            if st.button("⚡ Calificar y guardar notas de TODOS los alumnos con IA", key="btn_ia_todos_alumnos"):
+                alumnos_lista = df['Alumno'].unique()
+                total = len(alumnos_lista)
+                progreso = st.progress(0, text="Iniciando calificación masiva...")
+                errores_globales = []
+
+                for n, alumno in enumerate(alumnos_lista):
+                    progreso.progress(n / total, text=f"Calificando a {alumno} ({n+1}/{total})...")
+                    imagenes_este_alumno = glob.glob(f"uploads/{codigo_curso}_{alumno}_P*_Imagen.png")
+                    suma_notas = 0.0
+
+                    for img_path in imagenes_este_alumno:
+                        nombre_img = os.path.basename(img_path)
+                        try:
+                            nota_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
+                            st.session_state[img_path] = nota_ia
+                            suma_notas += nota_ia
+                        except Exception as e:
+                            errores_globales.append(f"{alumno} - {nombre_img}: {e}")
+
+                    df.loc[df['Alumno'] == alumno, 'Nota_Manual'] = suma_notas
+                    df.loc[df['Alumno'] == alumno, 'Nota'] = df['Nota_Auto'] + df['Nota_Manual']
+
+                progreso.progress(1.0, text="¡Listo!")
+                df.to_csv(ENTREGAS_FILE, index=False)
+
+                if errores_globales:
+                    st.error("Hubo errores calificando algunas imágenes:\n" + "\n".join(errores_globales))
+                st.success(f"Se calificaron y guardaron las notas de {total} alumno(s) con éxito.")
+                st.rerun()
+
+            st.divider()
             
             sel_alumno = st.selectbox("Seleccionar Alumno", df['Alumno'].unique())
             imagenes_alumno = glob.glob(f"uploads/{codigo_curso}_{sel_alumno}_P*_Imagen.png")
