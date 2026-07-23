@@ -31,7 +31,8 @@ def guardar_estado(file, estado):
     with open(file, "w") as f: json.dump(estado, f)
 
 def calificar_imagen_con_ia(img_path, nombre_img, estado, client):
-    """Envía una imagen a la IA junto con la pregunta y criterio reales, y devuelve la nota (float) ya acotada al puntaje máximo."""
+    """Envía una imagen a la IA junto con la pregunta y criterio reales.
+    Devuelve una tupla (nota: float, comentario: str)."""
     match_p = re.search(r"_P(\d+)_Imagen", nombre_img)
     idx_pregunta = int(match_p.group(1)) - 1 if match_p else None
 
@@ -53,19 +54,28 @@ def calificar_imagen_con_ia(img_path, nombre_img, estado, client):
         f"El puntaje máximo de esta pregunta es {puntaje_max}. "
         "Analiza la imagen adjunta, que debería contener la respuesta del alumno a esa pregunta. "
         "Si la imagen NO corresponde a una respuesta de examen (por ejemplo, es una foto personal, "
-        "un documento en blanco, o contenido sin relación con la pregunta), devuelve el número 0. "
-        "Si sí corresponde, evalúa qué tan correcto y completo es el desarrollo comparado con el criterio, "
-        "y devuelve un número entero o decimal entre 0 y el puntaje máximo. "
-        "Devuelve ÚNICAMENTE el número, sin texto adicional."
+        "un documento en blanco, o contenido sin relación con la pregunta), la nota debe ser 0. "
+        "Si sí corresponde, evalúa qué tan correcto y completo es el desarrollo comparado con el criterio. "
+        "Responde ÚNICAMENTE con un objeto JSON válido, sin bloques de markdown ni texto adicional, "
+        "con exactamente esta estructura: "
+        '{"nota": <número entre 0 y ' + str(puntaje_max) + '>, "comentario": "<retroalimentación breve de 1 a 2 frases para el alumno, en español>"}'
     )
     response = client.models.generate_content(
         model='gemini-3.5-flash',
         contents=[uploaded_file, prompt_ia]
     )
     texto_respuesta = response.text.strip()
-    nota = float(''.join(c for c in texto_respuesta if c.isdigit() or c == '.'))
+    texto_limpio = texto_respuesta.replace("```json", "").replace("```", "").strip()
+    try:
+        data = json.loads(texto_limpio)
+        nota = float(data.get("nota", 0))
+        comentario = str(data.get("comentario", ""))
+    except (json.JSONDecodeError, ValueError):
+        # Respaldo por si la IA no devuelve JSON válido: extraemos solo el número
+        nota = float(''.join(c for c in texto_limpio if c.isdigit() or c == '.') or 0)
+        comentario = "(La IA no devolvió un comentario legible)"
     nota = max(0.0, min(nota, float(puntaje_max)))
-    return nota
+    return nota, comentario
 
 # --- PANEL LATERAL ---
 password = st.sidebar.text_input("Clave de Admin", type="password")
@@ -152,6 +162,10 @@ if es_admin:
 
     with tab2: 
         st.subheader("Calificar Entregas (Manual y con IA)")
+        if "notas_ia_cache" not in st.session_state: st.session_state["notas_ia_cache"] = {}
+        if "comentarios_ia_cache" not in st.session_state: st.session_state["comentarios_ia_cache"] = {}
+        if "grade_version" not in st.session_state: st.session_state["grade_version"] = 0
+
         if os.path.exists(ENTREGAS_FILE):
             df = pd.read_csv(ENTREGAS_FILE)
             for col_nota in ['Nota_Auto', 'Nota_Manual', 'Nota']:
@@ -183,8 +197,9 @@ if es_admin:
                     for img_path in imagenes_este_alumno:
                         nombre_img = os.path.basename(img_path)
                         try:
-                            nota_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
-                            st.session_state[img_path] = nota_ia
+                            nota_ia, comentario_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
+                            st.session_state["notas_ia_cache"][img_path] = nota_ia
+                            st.session_state["comentarios_ia_cache"][img_path] = comentario_ia
                             suma_notas += nota_ia
                         except Exception as e:
                             errores_globales.append(f"{alumno} - {nombre_img}: {e}")
@@ -192,6 +207,7 @@ if es_admin:
                     df.loc[df['Alumno'] == alumno, 'Nota_Manual'] = suma_notas
                     df.loc[df['Alumno'] == alumno, 'Nota'] = df['Nota_Auto'] + df['Nota_Manual']
 
+                st.session_state["grade_version"] += 1
                 progreso.progress(1.0, text="¡Listo!")
                 df.to_csv(ENTREGAS_FILE, index=False)
 
@@ -213,22 +229,27 @@ if es_admin:
                         for img_path in imagenes_alumno:
                             nombre_img = os.path.basename(img_path)
                             try:
-                                nota_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
-                                st.session_state[img_path] = nota_ia
+                                nota_ia, comentario_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
+                                st.session_state["notas_ia_cache"][img_path] = nota_ia
+                                st.session_state["comentarios_ia_cache"][img_path] = comentario_ia
                             except Exception as e:
                                 errores.append(f"{nombre_img}: {e}")
                         if errores:
                             st.error("Hubo errores calificando algunas imágenes:\n" + "\n".join(errores))
+                    st.session_state["grade_version"] += 1
                     st.rerun()
 
                 for img_path in imagenes_alumno:
                     st.image(img_path)
                     nombre_img = os.path.basename(img_path)
+                    valor_cache = st.session_state["notas_ia_cache"].get(img_path, 0.0)
+                    widget_key = f"{img_path}_v{st.session_state['grade_version']}"
                     
                     col_num, col_ia, col_del = st.columns([2, 1, 1])
                     with col_num:
                         nota_ingresada = st.number_input(
-                            f"Nota para {nombre_img}:", min_value=0.0, max_value=20.0, step=0.5, key=img_path
+                            f"Nota para {nombre_img}:", min_value=0.0, max_value=20.0, step=0.5,
+                            value=valor_cache, key=widget_key
                         )
                         notas_por_pregunta[img_path] = nota_ingresada
                         
@@ -242,11 +263,17 @@ if es_admin:
                         if st.button(f"🤖 Calificar con IA", key=f"btn_ia_{img_path}"):
                             with st.spinner("La IA está analizando la imagen..."):
                                 try:
-                                    nota_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
-                                    st.session_state[img_path] = nota_ia
+                                    nota_ia, comentario_ia = calificar_imagen_con_ia(img_path, nombre_img, estado, client)
+                                    st.session_state["notas_ia_cache"][img_path] = nota_ia
+                                    st.session_state["comentarios_ia_cache"][img_path] = comentario_ia
+                                    st.session_state["grade_version"] += 1
                                 except Exception as e:
                                     st.error(f"Error al calificar con IA: {e}")
                             st.rerun()
+
+                    comentario_guardado = st.session_state["comentarios_ia_cache"].get(img_path)
+                    if comentario_guardado:
+                        st.info(f"💬 Retroalimentación de la IA: {comentario_guardado}")
                 
                 if st.button("Guardar Notas"):
                     df.loc[df['Alumno'] == sel_alumno, 'Nota_Manual'] = sum(notas_por_pregunta.values())
