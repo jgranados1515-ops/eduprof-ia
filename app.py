@@ -154,6 +154,9 @@ if es_admin:
         st.subheader("Calificar Entregas (Manual y con IA)")
         if os.path.exists(ENTREGAS_FILE):
             df = pd.read_csv(ENTREGAS_FILE)
+            for col_nota in ['Nota_Auto', 'Nota_Manual', 'Nota']:
+                if col_nota in df.columns:
+                    df[col_nota] = df[col_nota].astype(float)
             
             st.write("Selecciona un envío para borrar:")
             for i, row in df.iterrows():
