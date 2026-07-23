@@ -165,6 +165,13 @@ if es_admin:
         if "notas_ia_cache" not in st.session_state: st.session_state["notas_ia_cache"] = {}
         if "comentarios_ia_cache" not in st.session_state: st.session_state["comentarios_ia_cache"] = {}
         if "grade_version" not in st.session_state: st.session_state["grade_version"] = 0
+        if "errores_ia_pendientes" not in st.session_state: st.session_state["errores_ia_pendientes"] = []
+
+        if st.session_state["errores_ia_pendientes"]:
+            st.error("⚠️ Hubo errores al calificar con IA:\n\n" + "\n".join(st.session_state["errores_ia_pendientes"]))
+            if st.button("Cerrar aviso de errores"):
+                st.session_state["errores_ia_pendientes"] = []
+                st.rerun()
 
         if os.path.exists(ENTREGAS_FILE):
             df = pd.read_csv(ENTREGAS_FILE)
@@ -202,7 +209,7 @@ if es_admin:
                             st.session_state["comentarios_ia_cache"][img_path] = comentario_ia
                             suma_notas += nota_ia
                         except Exception as e:
-                            errores_globales.append(f"{alumno} - {nombre_img}: {e}")
+                            st.session_state["errores_ia_pendientes"].append(f"{alumno} - {nombre_img}: {repr(e)}")
 
                     df.loc[df['Alumno'] == alumno, 'Nota_Manual'] = suma_notas
                     df.loc[df['Alumno'] == alumno, 'Nota'] = df['Nota_Auto'] + df['Nota_Manual']
@@ -210,10 +217,7 @@ if es_admin:
                 st.session_state["grade_version"] += 1
                 progreso.progress(1.0, text="¡Listo!")
                 df.to_csv(ENTREGAS_FILE, index=False)
-
-                if errores_globales:
-                    st.error("Hubo errores calificando algunas imágenes:\n" + "\n".join(errores_globales))
-                st.success(f"Se calificaron y guardaron las notas de {total} alumno(s) con éxito.")
+                st.success(f"Proceso terminado para {total} alumno(s). Revisa el aviso de errores arriba si algo falló.")
                 st.rerun()
 
             st.divider()
@@ -225,7 +229,6 @@ if es_admin:
             if imagenes_alumno:
                 if st.button("🤖 Calificar TODAS las preguntas con IA", key=f"btn_ia_todas_{sel_alumno}"):
                     with st.spinner("La IA está calificando todas las respuestas de este alumno..."):
-                        errores = []
                         for img_path in imagenes_alumno:
                             nombre_img = os.path.basename(img_path)
                             try:
@@ -233,9 +236,7 @@ if es_admin:
                                 st.session_state["notas_ia_cache"][img_path] = nota_ia
                                 st.session_state["comentarios_ia_cache"][img_path] = comentario_ia
                             except Exception as e:
-                                errores.append(f"{nombre_img}: {e}")
-                        if errores:
-                            st.error("Hubo errores calificando algunas imágenes:\n" + "\n".join(errores))
+                                st.session_state["errores_ia_pendientes"].append(f"{nombre_img}: {repr(e)}")
                     st.session_state["grade_version"] += 1
                     st.rerun()
 
@@ -268,7 +269,7 @@ if es_admin:
                                     st.session_state["comentarios_ia_cache"][img_path] = comentario_ia
                                     st.session_state["grade_version"] += 1
                                 except Exception as e:
-                                    st.error(f"Error al calificar con IA: {e}")
+                                    st.session_state["errores_ia_pendientes"].append(f"{nombre_img}: {repr(e)}")
                             st.rerun()
 
                     comentario_guardado = st.session_state["comentarios_ia_cache"].get(img_path)
